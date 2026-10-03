@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
-import { Plus, Trash2, CheckCircle, XCircle, Copy, Edit3, Search, UserPlus, Settings2 } from 'lucide-react'
+import { Plus, Trash2, CheckCircle, XCircle, Copy, Edit3, Search, UserPlus, Settings2, Filter } from 'lucide-react'
 
 // Modal Konfirmasi Hapus
 const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText }) => {
@@ -25,6 +25,7 @@ export default function Customers() {
   const [customers, setCustomers] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('ALL') // ALL, LUNAS, BELUM
+  const [filterLayanan, setFilterLayanan] = useState('ALL') // ALL, CANVA, GEMINI
   const [toast, setToast] = useState(null)
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false })
@@ -173,18 +174,23 @@ export default function Customers() {
     setSettingsModal(prev => ({ ...prev, isOpen: false }))
   }
 
-  // Pencarian dan Filter
+  // --- LOGIKA FILTER CERDAS ---
   const filteredCustomers = customers.filter(cust => {
     const matchSearch =
       cust.nama?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cust.last_order_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cust.kode_sinkronisasi?.toLowerCase().includes(searchTerm.toLowerCase())
 
-    const matchFilter = filterStatus === 'ALL'
+    const matchStatus = filterStatus === 'ALL'
       ? true
       : (filterStatus === 'LUNAS' ? cust.status_aktif : !cust.status_aktif)
 
-    return matchSearch && matchFilter
+    const layananLower = cust.layanan?.toLowerCase() || ''
+    const matchLayanan = filterLayanan === 'ALL'
+      ? true
+      : (filterLayanan === 'CANVA' ? layananLower.includes('canva') : layananLower.includes('gemini'))
+
+    return matchSearch && matchStatus && matchLayanan
   })
 
   return (
@@ -208,8 +214,9 @@ export default function Customers() {
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="bg-white/60 backdrop-blur-xl border border-white p-4 rounded-2xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col md:flex-row gap-4">
-        <div className="relative flex-1">
+      <div className="bg-white/60 backdrop-blur-xl border border-white p-4 rounded-2xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col xl:flex-row gap-4">
+        {/* Kolom Pencarian */}
+        <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute inset-y-0 left-4 top-3 h-5 w-5 text-slate-400" />
           <input
             type="text"
@@ -219,18 +226,39 @@ export default function Customers() {
             className="w-full pl-11 pr-4 py-2.5 rounded-xl border-0 ring-1 ring-slate-200 bg-white/70 focus:ring-2 focus:ring-indigo-500"
           />
         </div>
-        <div className="flex bg-slate-100/80 p-1 rounded-xl">
-          {['ALL', 'LUNAS', 'BELUM'].map(status => (
-            <button
-              key={status}
-              onClick={() => setFilterStatus(status)}
-              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${
-                filterStatus === status ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {status === 'ALL' ? 'Semua' : status === 'LUNAS' ? 'Lunas' : 'Belum Bayar'}
-            </button>
-          ))}
+
+        {/* Grup Filter */}
+        <div className="flex flex-wrap gap-3">
+          {/* Filter Layanan (Canva/Gemini) */}
+          <div className="flex bg-slate-100/80 p-1 rounded-xl items-center">
+            <Filter size={16} className="text-slate-400 ml-2 mr-1 hidden sm:block" />
+            {['ALL', 'CANVA', 'GEMINI'].map(layanan => (
+              <button
+                key={layanan}
+                onClick={() => setFilterLayanan(layanan)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                  filterLayanan === layanan ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {layanan === 'ALL' ? 'Semua Produk' : layanan === 'CANVA' ? 'Canva' : 'Gemini'}
+              </button>
+            ))}
+          </div>
+
+          {/* Filter Status (Lunas/Belum) */}
+          <div className="flex bg-slate-100/80 p-1 rounded-xl">
+            {['ALL', 'LUNAS', 'BELUM'].map(status => (
+              <button
+                key={status}
+                onClick={() => setFilterStatus(status)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                  filterStatus === status ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {status === 'ALL' ? 'Semua Status' : status === 'LUNAS' ? 'Lunas' : 'Belum Bayar'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -252,7 +280,13 @@ export default function Customers() {
                 <tr key={cust.id} className="hover:bg-white/60 transition-colors">
                   <td className="py-4 px-6">
                     <p className="font-semibold text-slate-800 text-base">{cust.nama || 'Anonim'}</p>
-                    <p className="text-sm text-slate-500 mt-1 bg-slate-100 px-2 py-0.5 rounded w-fit">
+                    <p
+                      className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded w-fit border ${
+                        cust.layanan?.toLowerCase().includes('canva')
+                          ? 'bg-cyan-50 text-cyan-600 border-cyan-200'
+                          : 'bg-purple-50 text-purple-600 border-purple-200'
+                      }`}
+                    >
                       {cust.layanan || '-'}
                     </p>
                   </td>
