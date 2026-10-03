@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
-import { Plus, Trash2, CheckCircle, XCircle, Copy, Edit3, Search, UserPlus, Settings2, Filter } from 'lucide-react'
+import { Trash2, CheckCircle, XCircle, Copy, Edit3, Search, UserPlus, Settings2, Filter } from 'lucide-react'
 
-// Modal Konfirmasi Hapus
 const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText }) => {
   if (!isOpen) return null;
   return (
@@ -12,9 +11,7 @@ const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText
         <p className="text-slate-500 mb-8">{message}</p>
         <div className="flex gap-3 justify-end">
           <button onClick={onCancel} className="px-5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold">Batal</button>
-          <button onClick={onConfirm} className="px-5 py-2.5 rounded-xl font-semibold text-white bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-200">
-            {confirmText}
-          </button>
+          <button onClick={onConfirm} className="px-5 py-2.5 rounded-xl font-semibold text-white bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-200">{confirmText}</button>
         </div>
       </div>
     </div>
@@ -24,26 +21,18 @@ const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText
 export default function Customers() {
   const [customers, setCustomers] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
-  const [filterStatus, setFilterStatus] = useState('ALL') // ALL, LUNAS, BELUM
-  const [filterLayanan, setFilterLayanan] = useState('ALL') // ALL, CANVA, GEMINI
+  const [filterStatus, setFilterStatus] = useState('ALL')
+  const [filterLayanan, setFilterLayanan] = useState('ALL')
   const [toast, setToast] = useState(null)
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false })
-  const [modalForm, setModalForm] = useState({ isOpen: false, type: 'ADD' }) // type: ADD / EDIT
-
-  // State untuk Modal Pengaturan Link Canva
+  const [modalForm, setModalForm] = useState({ isOpen: false, type: 'ADD' })
   const [settingsModal, setSettingsModal] = useState({ isOpen: false, link: '' })
 
   const [formData, setFormData] = useState({
-    id: null,
-    nama: '',
-    layanan: 'Gemini Pro',
-    nominal: 15000,
-    status_aktif: false,
-    jatuh_tempo: '',
-    kode_sinkronisasi: '',
-    paket: 'GEMINI_1M',
-    last_order_id: null
+    id: null, nama: '', layanan: 'Gemini Pro', nominal: 15000,
+    status_aktif: false, jatuh_tempo: '', kode_sinkronisasi: '',
+    paket: 'GEMINI_1M', last_order_id: null
   })
 
   const paketOptions = [
@@ -66,7 +55,7 @@ export default function Customers() {
   }
 
   const fetchSettings = async () => {
-    const { data } = await supabase.from('settings').select('nilai').eq('nama_pengaturan', 'link_canva').single()
+    const { data } = await supabase.from('settings').select('nilai').eq('nama_pengaturan', 'link_canva').maybeSingle()
     if (data) setSettingsModal(prev => ({ ...prev, link: data.nilai }))
   }
 
@@ -80,27 +69,35 @@ export default function Customers() {
     showToast(`${type} disalin: ${text}`);
   }
 
-  // Generate Kode Unik 6 Karakter
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const openAddModal = () => {
     setFormData({
-      id: null,
-      nama: '',
-      layanan: 'Gemini Pro',
-      nominal: 15000,
-      status_aktif: false,
-      jatuh_tempo: '',
-      kode_sinkronisasi: generateCode(),
-      paket: 'GEMINI_1M',
-      last_order_id: null
+      id: null, nama: '', layanan: 'Gemini Pro', nominal: 15000,
+      status_aktif: false, jatuh_tempo: '', kode_sinkronisasi: generateCode(),
+      paket: 'GEMINI_1M', last_order_id: null
     })
     setModalForm({ isOpen: true, type: 'ADD' })
   }
 
-  const openEditModal = (cust) => {
-    setFormData({ ...cust, paket: 'CUSTOM', jatuh_tempo: cust.jatuh_tempo || '' })
-    setModalForm({ isOpen: true, type: 'EDIT' })
+  // ============================================
+  // FIX #1: REFRESH DATA SEBELUM BUKA MODAL
+  // ============================================
+  const openEditModal = async (cust) => {
+    console.log("🔄 Open edit modal, refreshing data untuk id:", cust.id);
+
+    // Ambil data terbaru dari Supabase (bukan dari state)
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('id', cust.id)
+      .maybeSingle();
+
+    const fresh = (data && !error) ? data : cust;
+    console.log("📦 Data fresh:", { id: fresh.id, last_order_id: fresh.last_order_id, status_aktif: fresh.status_aktif });
+
+    setFormData({ ...fresh, paket: 'CUSTOM', jatuh_tempo: fresh.jatuh_tempo || '' });
+    setModalForm({ isOpen: true, type: 'EDIT' });
   }
 
   const handlePaketChange = (e) => {
@@ -113,6 +110,9 @@ export default function Customers() {
     })
   }
 
+  // ============================================
+  // FIX #2: WEBHOOK TRIGGER DENGAN LOGGING + AWAIT
+  // ============================================
   const submitForm = async (e) => {
     e.preventDefault()
     const payload = {
@@ -129,43 +129,56 @@ export default function Customers() {
       showToast('Anggota baru berhasil ditambahkan!')
     } else {
       const oldData = customers.find(c => c.id === formData.id)
-      const isJustPaid = !oldData.status_aktif && formData.status_aktif
+      const isJustPaid = !oldData?.status_aktif && formData.status_aktif
 
       await supabase.from('subscriptions').update(payload).eq('id', formData.id)
 
-      // Kirim Notif ke Bot jika baru dilunasi
+      // Trigger webhook kalau baru dilunasi
       if (isJustPaid && formData.last_order_id) {
-        fetch('https://payment-fstore.vercel.app/api/bot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transaction_status: 'settlement', order_id: formData.last_order_id })
-        }).catch(err => console.log(err));
+        console.log("🚀 Trigger webhook, order_id:", formData.last_order_id);
+        try {
+          const res = await fetch('https://payment-fstore.vercel.app/api/bot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transaction_status: 'settlement',
+              order_id: formData.last_order_id
+            })
+          });
+          const text = await res.text();
+          console.log("✅ Webhook response:", res.status, text);
+          showToast('✅ Notifikasi berhasil dikirim ke bot!');
+        } catch (err) {
+          console.error("❌ Webhook error:", err);
+          showToast('⚠️ Gagal kirim notif ke bot. Cek console.');
+        }
+      } else {
+        console.log("ℹ️ Skip webhook. isJustPaid:", isJustPaid, "| last_order_id:", formData.last_order_id);
+        if (isJustPaid && !formData.last_order_id) {
+          showToast('⚠️ Tidak ada Order ID. Notif bot tidak dikirim.');
+        } else {
+          showToast('Perubahan data berhasil disimpan!')
+        }
       }
-      showToast('Perubahan data berhasil disimpan!')
     }
 
     setModalForm({ isOpen: false })
-    fetchCustomers()
+    setTimeout(() => fetchCustomers(), 500)
   }
 
   const deleteCustomer = (id, nama) => {
     setConfirmConfig({
-      isOpen: true,
-      title: 'Hapus Data',
-      message: `Data langganan ${nama} akan dihapus permanen.`,
-      confirmText: 'Hapus',
+      isOpen: true, title: 'Hapus Data',
+      message: `Data langganan ${nama} akan dihapus permanen.`, confirmText: 'Hapus',
       onConfirm: async () => {
         await supabase.from('subscriptions').delete().eq('id', id)
-        setConfirmConfig({ isOpen: false });
-        fetchCustomers();
-        showToast('Data dihapus!');
+        setConfirmConfig({ isOpen: false }); fetchCustomers(); showToast('Data dihapus!');
       }
     })
   }
 
   const saveSettings = async (e) => {
     e.preventDefault()
-    // Upsert: update jika sudah ada, insert jika belum
     await supabase.from('settings').upsert(
       { nama_pengaturan: 'link_canva', nilai: settingsModal.link },
       { onConflict: 'nama_pengaturan' }
@@ -174,21 +187,15 @@ export default function Customers() {
     setSettingsModal(prev => ({ ...prev, isOpen: false }))
   }
 
-  // --- LOGIKA FILTER CERDAS ---
   const filteredCustomers = customers.filter(cust => {
     const matchSearch =
       cust.nama?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cust.last_order_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cust.kode_sinkronisasi?.toLowerCase().includes(searchTerm.toLowerCase())
 
-    const matchStatus = filterStatus === 'ALL'
-      ? true
-      : (filterStatus === 'LUNAS' ? cust.status_aktif : !cust.status_aktif)
-
+    const matchStatus = filterStatus === 'ALL' ? true : (filterStatus === 'LUNAS' ? cust.status_aktif : !cust.status_aktif)
     const layananLower = cust.layanan?.toLowerCase() || ''
-    const matchLayanan = filterLayanan === 'ALL'
-      ? true
-      : (filterLayanan === 'CANVA' ? layananLower.includes('canva') : layananLower.includes('gemini'))
+    const matchLayanan = filterLayanan === 'ALL' ? true : (filterLayanan === 'CANVA' ? layananLower.includes('canva') : layananLower.includes('gemini'))
 
     return matchSearch && matchStatus && matchLayanan
   })
@@ -198,63 +205,32 @@ export default function Customers() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Manajemen Pelanggan</h1>
         <div className="flex gap-3">
-          <button
-            onClick={() => setSettingsModal(prev => ({ ...prev, isOpen: true }))}
-            className="flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-indigo-600 border border-indigo-200 px-5 py-2.5 rounded-xl shadow-sm transition-all hover:-translate-y-0.5"
-          >
+          <button onClick={() => setSettingsModal(prev => ({ ...prev, isOpen: true }))} className="flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-indigo-600 border border-indigo-200 px-5 py-2.5 rounded-xl shadow-sm transition-all hover:-translate-y-0.5">
             <Settings2 size={20} /> Link Canva
           </button>
-          <button
-            onClick={openAddModal}
-            className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5"
-          >
+          <button onClick={openAddModal} className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5">
             <UserPlus size={20} /> Tambah Data
           </button>
         </div>
       </div>
 
-      {/* Search & Filter Bar */}
       <div className="bg-white/60 backdrop-blur-xl border border-white p-4 rounded-2xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col xl:flex-row gap-4">
-        {/* Kolom Pencarian */}
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute inset-y-0 left-4 top-3 h-5 w-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Cari Nama / Order ID / Kode..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 rounded-xl border-0 ring-1 ring-slate-200 bg-white/70 focus:ring-2 focus:ring-indigo-500"
-          />
+          <input type="text" placeholder="Cari Nama / Order ID / Kode..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-11 pr-4 py-2.5 rounded-xl border-0 ring-1 ring-slate-200 bg-white/70 focus:ring-2 focus:ring-indigo-500" />
         </div>
-
-        {/* Grup Filter */}
         <div className="flex flex-wrap gap-3">
-          {/* Filter Layanan (Canva/Gemini) */}
           <div className="flex bg-slate-100/80 p-1 rounded-xl items-center">
             <Filter size={16} className="text-slate-400 ml-2 mr-1 hidden sm:block" />
             {['ALL', 'CANVA', 'GEMINI'].map(layanan => (
-              <button
-                key={layanan}
-                onClick={() => setFilterLayanan(layanan)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                  filterLayanan === layanan ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
+              <button key={layanan} onClick={() => setFilterLayanan(layanan)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${filterLayanan === layanan ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>
                 {layanan === 'ALL' ? 'Semua Produk' : layanan === 'CANVA' ? 'Canva' : 'Gemini'}
               </button>
             ))}
           </div>
-
-          {/* Filter Status (Lunas/Belum) */}
           <div className="flex bg-slate-100/80 p-1 rounded-xl">
             {['ALL', 'LUNAS', 'BELUM'].map(status => (
-              <button
-                key={status}
-                onClick={() => setFilterStatus(status)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                  filterStatus === status ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
+              <button key={status} onClick={() => setFilterStatus(status)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${filterStatus === status ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-500 hover:text-slate-700'}`}>
                 {status === 'ALL' ? 'Semua Status' : status === 'LUNAS' ? 'Lunas' : 'Belum Bayar'}
               </button>
             ))}
@@ -262,7 +238,6 @@ export default function Customers() {
         </div>
       </div>
 
-      {/* Tabel Data */}
       <div className="bg-white/60 backdrop-blur-2xl border border-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.03)] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left whitespace-nowrap">
@@ -280,39 +255,22 @@ export default function Customers() {
                 <tr key={cust.id} className="hover:bg-white/60 transition-colors">
                   <td className="py-4 px-6">
                     <p className="font-semibold text-slate-800 text-base">{cust.nama || 'Anonim'}</p>
-                    <p
-                      className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded w-fit border ${
-                        cust.layanan?.toLowerCase().includes('canva')
-                          ? 'bg-cyan-50 text-cyan-600 border-cyan-200'
-                          : 'bg-purple-50 text-purple-600 border-purple-200'
-                      }`}
-                    >
+                    <p className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded w-fit border ${cust.layanan?.toLowerCase().includes('canva') ? 'bg-cyan-50 text-cyan-600 border-cyan-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
                       {cust.layanan || '-'}
                     </p>
                   </td>
                   <td className="py-4 px-6 space-y-2">
-                    {/* Badge Kode Unik */}
                     {cust.kode_sinkronisasi ? (
-                      <div
-                        className="flex items-center gap-2 text-sm text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 w-fit cursor-pointer hover:bg-indigo-100 transition-colors"
-                        onClick={() => copyToClipboard(cust.kode_sinkronisasi, 'Kode Unik')}
-                      >
+                      <div className="flex items-center gap-2 text-sm text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 w-fit cursor-pointer hover:bg-indigo-100 transition-colors" onClick={() => copyToClipboard(cust.kode_sinkronisasi, 'Kode Unik')}>
                         <span className="font-bold tracking-wider">{cust.kode_sinkronisasi}</span>
                         <Copy size={14} />
                       </div>
                     ) : (
-                      <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100">
-                        Telegram Terhubung
-                      </span>
+                      <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100">Telegram Terhubung</span>
                     )}
-
-                    {/* Badge Order ID */}
                     {cust.last_order_id && (
-                      <div
-                        className="flex items-center gap-2 text-xs text-slate-600 bg-white/50 px-3 py-1.5 rounded-lg border border-slate-200 w-fit cursor-pointer hover:bg-slate-50 transition-colors"
-                        onClick={() => copyToClipboard(cust.last_order_id, 'Order ID')}
-                      >
-                        <span className="font-mono">{cust.last_order_id.substring(0, 12)}...</span>
+                      <div className="flex items-center gap-2 text-xs text-slate-600 bg-white/50 px-3 py-1.5 rounded-lg border border-slate-200 w-fit cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => copyToClipboard(cust.last_order_id, 'Order ID')}>
+                        <span className="font-mono">{cust.last_order_id.substring(0, 15)}...</span>
                         <Copy size={12} />
                       </div>
                     )}
@@ -322,140 +280,72 @@ export default function Customers() {
                     <p className="text-xs text-slate-500 mt-1">Tempo: {cust.jatuh_tempo || 'Belum diatur'}</p>
                   </td>
                   <td className="py-4 px-6">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border ${
-                        cust.status_aktif
-                          ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                          : 'bg-rose-50 text-rose-600 border-rose-200'
-                      }`}
-                    >
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border ${cust.status_aktif ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
                       {cust.status_aktif ? <CheckCircle size={14} /> : <XCircle size={14} />}
                       {cust.status_aktif ? 'LUNAS' : 'BELUM BAYAR'}
                     </span>
                   </td>
                   <td className="py-4 px-6 text-right">
                     <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => openEditModal(cust)}
-                        className="p-2 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-all"
-                      >
-                        <Edit3 size={18} />
-                      </button>
-                      <button
-                        onClick={() => deleteCustomer(cust.id, cust.nama)}
-                        className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      <button onClick={() => openEditModal(cust)} className="p-2 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-all"><Edit3 size={18} /></button>
+                      <button onClick={() => deleteCustomer(cust.id, cust.nama)} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><Trash2 size={18} /></button>
                     </div>
                   </td>
                 </tr>
               )) : (
-                <tr>
-                  <td colSpan="5" className="py-12 text-center text-slate-500 font-medium">
-                    Tidak ada data ditemukan.
-                  </td>
-                </tr>
+                <tr><td colSpan="5" className="py-12 text-center text-slate-500 font-medium">Tidak ada data ditemukan.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Modal Pengaturan Link Canva */}
       {settingsModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-200">
           <div className="bg-white/95 backdrop-blur-xl border border-white p-7 rounded-3xl shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-200">
             <h3 className="text-xl font-bold text-slate-800 mb-2">Restock Link Canva</h3>
-            <p className="text-slate-500 mb-6 text-sm">
-              Link ini akan otomatis dikirimkan ke pengguna melalui bot Telegram setelah pembayaran Canva mereka berstatus Lunas.
-            </p>
+            <p className="text-slate-500 mb-6 text-sm">Link ini akan otomatis dikirimkan ke pengguna melalui bot Telegram setelah pembayaran Canva mereka berstatus Lunas.</p>
             <form onSubmit={saveSettings} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-600 mb-1">Tautan Invite Tim (Active)</label>
-                <input
-                  type="url"
-                  required
-                  value={settingsModal.link}
-                  onChange={e => setSettingsModal({ ...settingsModal, link: e.target.value })}
-                  className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                  placeholder="https://www.canva.com/brand/join?token=..."
-                />
+                <input type="url" required value={settingsModal.link} onChange={e => setSettingsModal({ ...settingsModal, link: e.target.value })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500" placeholder="https://www.canva.com/brand/join?token=..." />
               </div>
               <div className="flex justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setSettingsModal(prev => ({ ...prev, isOpen: false }))}
-                  className="px-5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5"
-                >
-                  Simpan Tautan
-                </button>
+                <button type="button" onClick={() => setSettingsModal(prev => ({ ...prev, isOpen: false }))} className="px-5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold">Batal</button>
+                <button type="submit" className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5">Simpan Tautan</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Form Modal (Tambah & Edit) */}
       {modalForm.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-200">
           <div className="bg-white/95 backdrop-blur-xl border border-white p-7 rounded-3xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <h3 className="text-2xl font-bold text-slate-800 mb-6">
-              {modalForm.type === 'ADD' ? 'Registrasi Anggota Baru' : 'Edit Data Pelanggan'}
-            </h3>
+            <h3 className="text-2xl font-bold text-slate-800 mb-6">{modalForm.type === 'ADD' ? 'Registrasi Anggota Baru' : 'Edit Data Pelanggan'}</h3>
             <form onSubmit={submitForm} className="space-y-5">
               <div className="flex gap-4">
                 <div className="flex-[2]">
                   <label className="block text-sm font-medium text-slate-600 mb-1">Nama Lengkap</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.nama}
-                    onChange={e => setFormData({ ...formData, nama: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                  />
+                  <input type="text" required value={formData.nama} onChange={e => setFormData({ ...formData, nama: e.target.value })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500" />
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-slate-600 mb-1">Kode Unik</label>
-                  <input
-                    type="text"
-                    value={formData.kode_sinkronisasi}
-                    onChange={e => setFormData({ ...formData, kode_sinkronisasi: e.target.value.toUpperCase() })}
-                    className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-700 uppercase"
-                    placeholder="Kosongkan jika terhubung"
-                  />
+                  <input type="text" value={formData.kode_sinkronisasi} onChange={e => setFormData({ ...formData, kode_sinkronisasi: e.target.value.toUpperCase() })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-700 uppercase" placeholder="Kosongkan jika terhubung" />
                 </div>
               </div>
 
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-slate-600 mb-1">Paket Harga</label>
-                  <select
-                    value={formData.paket}
-                    onChange={handlePaketChange}
-                    className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {paketOptions.map(p => (
-                      <option key={p.id} value={p.id}>{p.nama}</option>
-                    ))}
+                  <select value={formData.paket} onChange={handlePaketChange} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500">
+                    {paketOptions.map(p => (<option key={p.id} value={p.id}>{p.nama}</option>))}
                   </select>
                 </div>
                 {formData.paket === 'CUSTOM' && (
                   <div className="flex-1 animate-in slide-in-from-right-4">
                     <label className="block text-sm font-medium text-slate-600 mb-1">Harga Custom (Rp)</label>
-                    <input
-                      type="number"
-                      required
-                      value={formData.nominal}
-                      onChange={e => setFormData({ ...formData, nominal: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                    />
+                    <input type="number" required value={formData.nominal} onChange={e => setFormData({ ...formData, nominal: e.target.value })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500" />
                   </div>
                 )}
               </div>
@@ -463,60 +353,41 @@ export default function Customers() {
               {formData.paket === 'CUSTOM' && (
                 <div>
                   <label className="block text-sm font-medium text-slate-600 mb-1">Layanan Custom</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.layanan}
-                    onChange={e => setFormData({ ...formData, layanan: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                  />
+                  <input type="text" required value={formData.layanan} onChange={e => setFormData({ ...formData, layanan: e.target.value })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500" />
                 </div>
               )}
 
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-slate-600 mb-1">Status Pembayaran</label>
-                  <select
-                    value={formData.status_aktif}
-                    onChange={e => setFormData({ ...formData, status_aktif: e.target.value === 'true' })}
-                    className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 font-semibold"
-                  >
+                  <select value={formData.status_aktif} onChange={e => setFormData({ ...formData, status_aktif: e.target.value === 'true' })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 font-semibold">
                     <option value={true}>✅ Lunas</option>
                     <option value={false}>❌ Belum Bayar</option>
                   </select>
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-slate-600 mb-1">Tgl Jatuh Tempo (Opsional)</label>
-                  <input
-                    type="date"
-                    value={formData.jatuh_tempo}
-                    onChange={e => setFormData({ ...formData, jatuh_tempo: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                  />
+                  <input type="date" value={formData.jatuh_tempo} onChange={e => setFormData({ ...formData, jatuh_tempo: e.target.value })} className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500" />
                 </div>
               </div>
 
+              {/* Info Order ID */}
+              {formData.last_order_id && (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+                  <p className="text-xs text-indigo-500 font-medium mb-1">Order ID (untuk notif bot)</p>
+                  <p className="text-xs font-mono text-indigo-700 break-all">{formData.last_order_id}</p>
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 pt-6">
-                <button
-                  type="button"
-                  onClick={() => setModalForm({ isOpen: false })}
-                  className="px-5 py-3 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5"
-                >
-                  Simpan Data
-                </button>
+                <button type="button" onClick={() => setModalForm({ isOpen: false })} className="px-5 py-3 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold">Batal</button>
+                <button type="submit" className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5">Simpan Data</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Toast Notification (Glassmorphism Float) */}
       {toast && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-bottom-5 fade-in duration-300">
           <div className="bg-slate-800/90 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl font-medium tracking-wide border border-slate-600/50 flex items-center gap-2">
