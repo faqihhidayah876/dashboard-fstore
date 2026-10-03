@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
-import { Plus, Trash2, CheckCircle, XCircle, Copy, Edit3, Search, UserPlus } from 'lucide-react'
+import { Plus, Trash2, CheckCircle, XCircle, Copy, Edit3, Search, UserPlus, Settings2 } from 'lucide-react'
 
 // Modal Konfirmasi Hapus
 const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText }) => {
@@ -29,6 +29,10 @@ export default function Customers() {
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false })
   const [modalForm, setModalForm] = useState({ isOpen: false, type: 'ADD' }) // type: ADD / EDIT
+
+  // State untuk Modal Pengaturan Link Canva
+  const [settingsModal, setSettingsModal] = useState({ isOpen: false, link: '' })
+
   const [formData, setFormData] = useState({
     id: null,
     nama: '',
@@ -50,11 +54,19 @@ export default function Customers() {
     { id: 'CUSTOM', nama: 'Custom (Manual)', harga: '', layanan: 'Custom' }
   ]
 
-  useEffect(() => { fetchCustomers() }, [])
+  useEffect(() => {
+    fetchCustomers()
+    fetchSettings()
+  }, [])
 
   const fetchCustomers = async () => {
     const { data } = await supabase.from('subscriptions').select('*').order('id', { ascending: false })
     if (data) setCustomers(data)
+  }
+
+  const fetchSettings = async () => {
+    const { data } = await supabase.from('settings').select('nilai').eq('nama_pengaturan', 'link_canva').single()
+    if (data) setSettingsModal(prev => ({ ...prev, link: data.nilai }))
   }
 
   const showToast = (message) => {
@@ -150,6 +162,17 @@ export default function Customers() {
     })
   }
 
+  const saveSettings = async (e) => {
+    e.preventDefault()
+    // Upsert: update jika sudah ada, insert jika belum
+    await supabase.from('settings').upsert(
+      { nama_pengaturan: 'link_canva', nilai: settingsModal.link },
+      { onConflict: 'nama_pengaturan' }
+    )
+    showToast('Link Canva berhasil diperbarui!')
+    setSettingsModal(prev => ({ ...prev, isOpen: false }))
+  }
+
   // Pencarian dan Filter
   const filteredCustomers = customers.filter(cust => {
     const matchSearch =
@@ -168,12 +191,20 @@ export default function Customers() {
     <div className="space-y-6 pb-20 relative">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Manajemen Pelanggan</h1>
-        <button
-          onClick={openAddModal}
-          className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5"
-        >
-          <UserPlus size={20} /> Tambah Data
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setSettingsModal(prev => ({ ...prev, isOpen: true }))}
+            className="flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-indigo-600 border border-indigo-200 px-5 py-2.5 rounded-xl shadow-sm transition-all hover:-translate-y-0.5"
+          >
+            <Settings2 size={20} /> Link Canva
+          </button>
+          <button
+            onClick={openAddModal}
+            className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5"
+          >
+            <UserPlus size={20} /> Tambah Data
+          </button>
+        </div>
       </div>
 
       {/* Search & Filter Bar */}
@@ -296,6 +327,46 @@ export default function Customers() {
           </table>
         </div>
       </div>
+
+      {/* Modal Pengaturan Link Canva */}
+      {settingsModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white/95 backdrop-blur-xl border border-white p-7 rounded-3xl shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Restock Link Canva</h3>
+            <p className="text-slate-500 mb-6 text-sm">
+              Link ini akan otomatis dikirimkan ke pengguna melalui bot Telegram setelah pembayaran Canva mereka berstatus Lunas.
+            </p>
+            <form onSubmit={saveSettings} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">Tautan Invite Tim (Active)</label>
+                <input
+                  type="url"
+                  required
+                  value={settingsModal.link}
+                  onChange={e => setSettingsModal({ ...settingsModal, link: e.target.value })}
+                  className="w-full px-4 py-3 rounded-xl border-0 ring-1 ring-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500"
+                  placeholder="https://www.canva.com/brand/join?token=..."
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setSettingsModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-5 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5"
+                >
+                  Simpan Tautan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Form Modal (Tambah & Edit) */}
       {modalForm.isOpen && (
